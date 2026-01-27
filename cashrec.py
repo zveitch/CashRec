@@ -682,13 +682,13 @@ df_USDFundList = pd.read_csv(data_dir / USDFundList_filename)
 ##"bankstmt_flows_400310050003.csv"
 
 for i, fund in enumerate(df_USDFundList['FundShortName']):
-    if i < 133:
+    if i <133:
         try:
             account_number = df_USDFundList['Account'].iloc[i]
             fund_short_name = df_USDFundList['FundShortName'].iloc[i]
             print(i, fund_short_name, account_number)
             #cash_rec_filename = f'cash_rec_{account_number}.csv'
-            cash_rec_filename = f'FullCashFlows.csv'
+            cash_rec_filename = f'FullCashFlows_20260126v2.csv'
             bankstmt_filename = f'bankstmt_flows_{account_number}.csv'
             cash_rec(data_dir, cash_rec_filename, bankstmt_filename)
         except Exception as e:
