@@ -89,6 +89,41 @@ def tag_investment(text_original: str, text_norm: str, rules: Dict):
     meta["year_required_missing"] = year_required_missing
     return (found_originator, found_spv, found_year, meta)
 
+def _find_year(text_original: str) -> Optional[str]:
+    yrs = extract_years(text_original or "")
+    return yrs[0] if yrs else None
+
+def _match_by_synonyms(text_norm: str, items: list[dict]) -> Tuple[Optional[dict], Optional[str]]:
+    for item in items:  # items pre-sorted by priority
+        for syn in item.get("synonyms", []):
+            syn_norm = normalize_text(syn)
+            if syn_norm and re.search(r"\b" + re.escape(syn_norm) + r"\b", text_norm):
+                year = _find_year(text_norm)  # or text_original if you prefer
+                if item.get("years_required", False) and not year:
+                    continue
+                return item, year
+    return None, None
+
+def tag_investor(text_original: str, text_norm: str, rules: Dict):
+    inv_rules = rules.get("investor", {}).get("tags", [])
+    if not inv_rules:
+        return None, None, {"source": "investor_rules", "matched": False}
+    item, year = _match_by_synonyms(text_norm, inv_rules)
+    if item:
+        # item["tag"] is your canonical investor name
+        return item.get("tag"), year, {"source": "investor_rules", "matched": True}
+    return None, None, {"source": "investor_rules", "matched": False}
+
+def tag_expense(text_original: str, text_norm: str, txn_type: str, rules: Dict):
+    by_type = rules.get("expenses", {}).get("by_type", {})
+    items = by_type.get(txn_type, [])
+    if not items:
+        return None, None, {"source": "expense_rules", "matched": False}
+    item, year = _match_by_synonyms(text_norm, items)  # already defined for investor
+    if item:
+        return item.get("tag"), year, {"source": "expense_rules", "matched": True}
+    return None, None, {"source": "expense_rules", "matched": False}
+
 def tag_row(row: pd.Series, rules: Dict) -> Dict:
     d1b = row.get("Description1B", "")
     d2 = row.get("Description2", "")
@@ -107,6 +142,7 @@ def tag_row(row: pd.Series, rules: Dict) -> Dict:
             return {
                 "Type_Group": type_group,
                 "Tag": priority,
+                "Investor": None,
                 "Originator": None,
                 "SPV": None,
                 "Tag_Year": first_nonempty(*extract_years(text_original)),
@@ -121,6 +157,7 @@ def tag_row(row: pd.Series, rules: Dict) -> Dict:
             return {
                 "Type_Group": type_group,
                 "Tag": comp if comp else None,
+                "Investor": None,
                 "Originator": org,
                 "SPV": spv,
                 "Tag_Year": year,
@@ -131,6 +168,7 @@ def tag_row(row: pd.Series, rules: Dict) -> Dict:
         return {
             "Type_Group": type_group,
             "Tag": None,
+            "Investor": None,
             "Originator": None,
             "SPV": None,
             "Tag_Year": first_nonempty(*extract_years(text_original)),
@@ -138,10 +176,64 @@ def tag_row(row: pd.Series, rules: Dict) -> Dict:
             "Tag_Year_Required_Missing": False,
         }
 
+    if type_group == "Investor payments":
+        inv_tag, inv_year, meta = tag_investor(text_original, text_norm, rules)
+        if inv_tag:
+            return {
+                "Type_Group": type_group,
+                "Tag": inv_tag,  # << Tag is the investor name
+                "Investor": inv_tag,  # << explicit column for clarity
+                "Originator": None,
+                "SPV": None,
+                "Tag_Year": inv_year,  # use if you want investor-year notion
+                "Tag_Source": meta.get("source", "investor_rules"),
+                "Tag_Year_Required_Missing": (
+                        meta.get("matched") and inv_year is None and any(
+                    t.get("tag") == inv_tag and t.get("years_required", False)
+                    for t in rules.get("investor", {}).get("tags", [])
+                )
+                ),
+            }
+        # No match → show up in exceptions so ops can add synonyms
+        return {
+            "Type_Group": type_group,
+            "Tag": None,
+            "Investor": None,
+            "Originator": None,
+            "SPV": None,
+            "Tag_Year": first_nonempty(*extract_years(text_original)),
+            "Tag_Source": "investor_no_match",
+            "Tag_Year_Required_Missing": False,
+        }
+    if type_group == "Expense":
+        exp_tag, exp_year, meta = tag_expense(text_original, text_norm, txn_type, rules)
+        if exp_tag:
+            return {
+                "Type_Group": type_group,
+                "Tag": exp_tag,  # ⬅️ Tag is the expense tag from CSV
+                "Investor": None,
+                "Originator": None,
+                "SPV": None,
+                "Tag_Year": exp_year,
+                "Tag_Source": meta.get("source", "expense_rules"),
+                "Tag_Year_Required_Missing": False,
+            }
+        # Fallback only if no rule matched for the given Type
+        return {
+            "Type_Group": type_group,
+            "Tag": txn_type if txn_type else None,
+            "Investor": None,
+            "Originator": None,
+            "SPV": None,
+            "Tag_Year": first_nonempty(*extract_years(text_original)),
+            "Tag_Source": "expense_fallback_type",
+            "Tag_Year_Required_Missing": False,
+        }
     # ✨ For all other Types: Tag = Type (passthrough)
     return {
         "Type_Group": type_group,
         "Tag": txn_type if txn_type else None,
+        "Investor": None,
         "Originator": None,
         "SPV": None,
         "Tag_Year": first_nonempty(*extract_years(text_original)),

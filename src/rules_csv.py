@@ -23,6 +23,43 @@ def _to_int(cell: str, default: int) -> int:
     except Exception:
         return default
 
+# /src/rules_csv.py (additions)
+def _load_investor_rules(rules_dir: Path):
+    rows = _read_csv(rules_dir / "investor_tags.csv")
+    tags = []
+    for r in rows:
+        tag = (r.get("tag") or "").strip()
+        if not tag:
+            continue
+        tags.append({
+            "tag": tag,
+            "synonyms": _split(r.get("synonyms")),
+            "priority": _to_int(r.get("priority", 100), 100),
+            "years_required": _to_bool(r.get("years_required")),
+        })
+    # sort by priority asc
+    tags.sort(key=lambda x: x["priority"])
+    return tags
+
+def _load_expense_rules(rules_dir: Path):
+    rows = _read_csv(rules_dir / "expense_tags.csv")
+    by_type = {}
+    for r in rows:
+        typ = (r.get("type") or "").strip()
+        tag = (r.get("tag") or "").strip()
+        if not typ or not tag:
+            continue
+        by_type.setdefault(typ, []).append({
+            "tag": tag,
+            "synonyms": _split(r.get("synonyms")),
+            "priority": _to_int(r.get("priority", 100), 100),
+            "years_required": _to_bool(r.get("years_required")),
+        })
+    # sort each type list by priority asc
+    for t, lst in by_type.items():
+        lst.sort(key=lambda x: x["priority"])
+    return by_type
+
 def load_rules_from_csv(rules_dir: Path = RULES_DIR) -> Dict:
     """
     Load ops-maintained CSV rules and build the in-memory rules dict.
@@ -34,6 +71,8 @@ def load_rules_from_csv(rules_dir: Path = RULES_DIR) -> Dict:
     originators_rows = _read_csv(rules_dir / "investment_originators.csv")
     spvs_rows        = _read_csv(rules_dir / "investment_spvs.csv")
     pri_phr_rows     = _read_csv(rules_dir / "priority_phrases.csv")
+    investor_rules = _load_investor_rules(rules_dir)
+    expense_rules = _load_expense_rules(rules_dir)
 
     # Priority phrases (global; not used to override investment logic, but used for non-investment)
     priority_phrases = [
@@ -89,7 +128,7 @@ def load_rules_from_csv(rules_dir: Path = RULES_DIR) -> Dict:
             seen.add(key)
 
     rules = {
-        "version": 3,
+        "version": 4,
         "priority_phrases": priority_phrases,
         "type_groups": type_groups,
         # No type_rules: Tag = Type for non-investment rows
@@ -109,6 +148,13 @@ def load_rules_from_csv(rules_dir: Path = RULES_DIR) -> Dict:
                 }
                 for org, defn in originators.items()
             }
+        },
+        # NEW:
+        "investor": {
+            "tags": investor_rules  # list of dicts with tag, synonyms, priority, years_required
+        },
+        "expenses": {
+            "by_type": expense_rules  # dict: type -> list of tag dicts
         }
     }
     return rules

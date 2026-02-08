@@ -30,18 +30,18 @@ def reconcile_account(df: pd.DataFrame, account_id: str, rules) -> Tuple[pd.Data
     df["Cash_Date"] = coerce_date(df.get("Cash_Date"))
     df["Debit"] = coerce_number(df.get("Debit"))
     df["Credit"] = coerce_number(df.get("Credit"))
-    df["Manual_Amount"] = coerce_number(df.get("Amount"))
+    df["CashRec_Amount"] = coerce_number(df.get("Amount"))
     df["Bank_Amount"] = df.apply(lambda r: signed_bank_amount(r["Debit"], r["Credit"]), axis=1)
     df["Match_ID"] = df["Reconciled"].apply(parse_match_id)
 
     # Tagging
     tag_results = df.apply(lambda r: tag_row(r, rules), axis=1, result_type='expand')
-    tag_results.columns = ["Type_Group", "Tag", "Originator", "SPV", "Tag_Year", "Tag_Source", "Tag_Year_Required_Missing"]
+    tag_results.columns = ["Type_Group", "Tag", "Investor", "Originator", "SPV", "Tag_Year", "Tag_Source", "Tag_Year_Required_Missing"]
     detailed_df = pd.concat([df, tag_results], axis=1)
 
     # Ensure numeric before aggregations
     detailed_df["Bank_Amount"] = pd.to_numeric(detailed_df["Bank_Amount"], errors="coerce").fillna(0.0)
-    detailed_df["Manual_Amount"] = pd.to_numeric(detailed_df["Manual_Amount"], errors="coerce").fillna(0.0)
+    detailed_df["CashRec_Amount"] = pd.to_numeric(detailed_df["CashRec_Amount"], errors="coerce").fillna(0.0)
 
     # ✅ Ensure datetime64[ns] for date columns (blanks -> NaT)
     for col in ["Calculated_Date", "Cash_Date"]:
@@ -65,7 +65,7 @@ def reconcile_account(df: pd.DataFrame, account_id: str, rules) -> Tuple[pd.Data
         detailed_df
         .groupby("Match_ID", dropna=False)
         .agg(
-            Manual_Amount_Total=("Manual_Amount", "sum"),
+            CashRec_Amount_Total=("CashRec_Amount", "sum"),
             Cash_Date_Min=("Cash_Date", "min"),
             Cash_Date_Max=("Cash_Date", "max"),
         )
@@ -78,7 +78,7 @@ def reconcile_account(df: pd.DataFrame, account_id: str, rules) -> Tuple[pd.Data
     # --- Amount_Diff numeric & safe ---
     detailed_df["Amount_Diff"] = (
         pd.to_numeric(detailed_df["Bank_Amount_Total"], errors="coerce").fillna(0)
-        - pd.to_numeric(detailed_df["Manual_Amount_Total"], errors="coerce").fillna(0)
+        - pd.to_numeric(detailed_df["CashRec_Amount_Total"], errors="coerce").fillna(0)
     ).round(2)
 
     # --- Date lag numeric or NaN ---
@@ -129,7 +129,7 @@ def reconcile_account(df: pd.DataFrame, account_id: str, rules) -> Tuple[pd.Data
     summary_df = (
         detailed_df
         .groupby(["Type", "Type_Group", "Tag", "Tag_Year"], dropna=False)
-        .agg(Manual_Amount_Total=("Manual_Amount", "sum"), Rows=("Manual_Amount", "count"))
+        .agg(CashRec_Amount_Total=("CashRec_Amount", "sum"), Rows=("CashRec_Amount", "count"))
         .reset_index()
         .sort_values(["Type_Group", "Type", "Tag", "Tag_Year"], na_position="last")
     )
